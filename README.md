@@ -8,7 +8,7 @@ A desktop scientific calculator built with Python and Tkinter. It supports basic
 
 ## 📸 Screenshot
 
-| Cosine | Logarithm | Error Handling |
+| Trigonometric | Logarithm | Error Handling |
 |---|---|---|
 | ![Trigonometric Function](sin.png) | ![log](log.png) | ![error](error.png) |
 
