@@ -8,7 +8,11 @@ A desktop scientific calculator built with Python and Tkinter. It supports basic
 
 ## 📸 Screenshot
 
-![Calculator Screenshot](screenshot.png)
+![Home Screen](home.png)
+
+| Cosine | Logarithm | Error Handling |
+|---|---|---|
+| ![cos](cos.png) | ![log](log.png) | ![error](error.png) |
 
 ---
 
@@ -101,9 +105,11 @@ No extra libraries need to be installed.
 ## 📁 Project Structure
 
 ```
-scientific-calculator/
 ├── scientific_calculator.py   # Main source code
-├── screenshot.png             # Screenshot of the app
+├── home.png                   # Home screen screenshot
+├── cos.png                    # Trigonometric example
+├── log.png                    # Logarithm example
+├── error.png                  # Error handling example
 └── README.md                  # Project documentation
 ```
 
