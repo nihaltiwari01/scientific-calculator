@@ -1,7 +1,11 @@
 """
-Scientific Calculator using Python Tkinter
+Scientific Calculator using Python Tkinter  (Dark card + blue theme)
 Run:  python scientific_calculator.py
 No extra libraries needed (tkinter and math come with Python).
+
+The whole calculator is drawn on ONE Canvas:
+background (light with a big blue circle) -> dark rounded card ->
+display text -> rounded buttons.
 """
 
 import math
@@ -23,110 +27,378 @@ SAFE_NAMES = {
     "e": math.e,
 }
 
+# ---------------------------------------------------------------
+# 2. Sizes and colours
+# ---------------------------------------------------------------
+W, H = 360, 586                     # window size (keep both even)
+CARD = (16, 16, 344, 570)           # dark card: x1, y1, x2, y2
+CARD_R = 30                         # card corner radius
+LEFT, COLW, GAP = 32, 68, 8         # first column x, button width, gap
+ROWH = 52                           # height of a main button
+SMALL_H, SMALL_TOP = 30, 140        # small (scientific) buttons
+MAIN_TOP = 262                      # y where the main buttons start
+
+WHITE = "#ffffff"
+PAGE = "#eaf2fb"                    # light page colour
+BLUE = "#1f7ae6"                    # big circle colour
+CARD_COLOR = "#151921"
+
+# Button colours: (fill, text colour)
+STYLE_SMALL = ("#1f2530", "#8294ad")
+STYLE_NUMBER = ("#232a36", "#a9b8cf")
+STYLE_GRAY = ("#4b515c", WHITE)
+STYLE_OPERATOR = ("#0f66d9", WHITE)
+STYLE_EQUALS = ("#1e90ff", WHITE)
+
+
+def blend(color1, color2, t):
+    """Mix two hex colours. t=0 gives color1, t=1 gives color2."""
+    r1, g1, b1 = (int(color1[i:i + 2], 16) for i in (1, 3, 5))
+    r2, g2, b2 = (int(color2[i:i + 2], 16) for i in (1, 3, 5))
+    r = int(r1 + (r2 - r1) * t)
+    g = int(g1 + (g2 - g1) * t)
+    b = int(b1 + (b2 - b1) * t)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def bg_at(x, y):
+    """Page colour at (x, y): light background with soft blue circles."""
+    color = PAGE
+    d = math.hypot(x - 70, y - 150)
+    if d < 210:
+        color = blend(color, BLUE, min(1.0, (1 - d / 210) * 2.4))
+    d = math.hypot(x - 310, y - 540)
+    if d < 130:
+        color = blend(color, "#9cc6f5", (1 - d / 130) * 0.9)
+    return color
+
+
+def rounded_points(x1, y1, x2, y2, r):
+    """Points of a rounded rectangle (used with smooth=True)."""
+    return [
+        x1 + r, y1, x1 + r, y1, x2 - r, y1, x2 - r, y1,
+        x2, y1, x2, y1 + r, x2, y1 + r, x2, y2 - r, x2, y2 - r,
+        x2, y2, x2 - r, y2, x2 - r, y2, x1 + r, y2, x1 + r, y2,
+        x1, y2, x1, y2 - r, x1, y2 - r, x1, y1 + r, x1, y1 + r,
+        x1, y1,
+    ]
+
+
+def pretty(text):
+    """Add thousand separators: 12454 -> 12,454 (errors stay unchanged)."""
+    try:
+        if "e" in text.lower():
+            return text
+        if "." in text:
+            whole, fraction = text.split(".")
+            return f"{int(whole):,}.{fraction}"
+        return f"{int(text):,}"
+    except ValueError:
+        return text
+
+
+# ---------------------------------------------------------------
+# 3. One rounded button drawn on the shared canvas.
+#    Layers (bottom to top): shadow, body, ripple, shine, label.
+#    On press: the body squishes and a water ripple spreads out.
+# ---------------------------------------------------------------
+class GlassButton:
+    FRAMES = 16     # animation steps
+    DELAY = 14      # milliseconds between steps
+
+    def __init__(self, canvas, x, y, w, h, text, value, style, font, radius=14):
+        self.canvas = canvas
+        self.x, self.y, self.w, self.h = x, y, w, h
+        self.radius = radius
+        self.value = value
+        self.busy = False
+        self.uid = f"btn{id(self)}"
+
+        fill, text_color = style
+        self.normal = fill
+        self.hover = blend(fill, WHITE, 0.12)
+        self.edge = blend(fill, WHITE, 0.10)
+        self.glow = blend(fill, WHITE, 0.38)
+
+        # soft shadow under the button
+        canvas.create_polygon(
+            rounded_points(x + 1, y + 3, x + w - 1, y + h + 2, radius),
+            smooth=True, fill="#0b0e13", outline="")
+        self.body = canvas.create_polygon(
+            self.body_points(0), smooth=True, fill=self.normal,
+            outline=self.edge, width=1)
+        self.shine = canvas.create_polygon(
+            self.shine_points(0), smooth=True,
+            fill=blend(fill, WHITE, 0.06), outline="")
+        self.label = canvas.create_text(
+            x + w / 2, y + h / 2, text=text, fill=text_color, font=font)
+
+    # ----- shapes (inset makes the button shrink a little when pressed)
+    def body_points(self, inset):
+        return rounded_points(
+            self.x + inset, self.y + inset,
+            self.x + self.w - inset, self.y + self.h - inset, self.radius)
+
+    def shine_points(self, inset):
+        top = self.y + 3 + inset
+        bottom = self.y + self.h * 0.46
+        side = 6 + inset
+        return rounded_points(self.x + side, top, self.x + self.w - side,
+                              bottom, max(2, self.radius - 4))
+
+    def contains(self, px, py):
+        return (self.x <= px <= self.x + self.w and
+                self.y <= py <= self.y + self.h)
+
+    def set_hover(self, on):
+        self.canvas.itemconfig(self.body, fill=self.hover if on else self.normal)
+        self.canvas.itemconfig(
+            self.shine,
+            fill=blend(self.normal, WHITE, 0.16 if on else 0.06))
+
+    # ----- press animation
+    def start_animation(self):
+        if not self.busy:
+            self.busy = True
+            self.animate(0)
+
+    def animate(self, step):
+        c = self.canvas
+        c.delete("ripple" + self.uid)
+        if step > self.FRAMES:                     # animation finished
+            c.coords(self.body, *self.body_points(0))
+            c.coords(self.shine, *self.shine_points(0))
+            self.busy = False
+            return
+
+        t = step / self.FRAMES                     # goes from 0 to 1
+        inset = 2.5 * math.sin(math.pi * t)        # shrink, then spring back
+        c.coords(self.body, *self.body_points(inset))
+        c.coords(self.shine, *self.shine_points(inset))
+
+        # ripple: an oval growing from the centre and fading away
+        rx, ry = (self.w / 2 - 3) * t, (self.h / 2 - 3) * t
+        cx, cy = self.x + self.w / 2, self.y + self.h / 2
+        c.create_oval(cx - rx, cy - ry, cx + rx, cy + ry,
+                      fill=blend(self.glow, self.hover, t), outline="",
+                      tags="ripple" + self.uid)
+        c.tag_raise(self.shine)                    # keep shine and text on top
+        c.tag_raise(self.label)
+        c.after(self.DELAY, self.animate, step + 1)
+
 
 class Calculator:
     def __init__(self, root):
         self.root = root
         self.root.title("Scientific Calculator")
         self.root.resizable(False, False)
-        self.root.configure(bg="#1e1e1e")
 
-        self.expression = ""  # what the user has typed so far
+        self.expression = ""      # what the user has typed so far
+        self.result = "0"         # raw result (used for chaining + errors)
+        self.buttons = []         # all buttons
+        self.by_value = {}        # value -> button (used by the keyboard)
+        self.hovered = None       # button under the mouse
 
+        self.canvas = tk.Canvas(root, width=W, height=H, highlightthickness=0,
+                                bg=PAGE)
+        self.canvas.pack()
+
+        self.bg_image = self.make_background()     # keep a reference!
+        self.canvas.create_image(0, 0, image=self.bg_image, anchor="nw")
+
+        self.create_card()
         self.create_display()
         self.create_buttons()
-        self.bind_keyboard()
+        self.bind_events()
 
     # -----------------------------------------------------------
-    # 2. Display: one line for the expression, one for the result
+    # 4. Background image (painted at half size, then zoomed 2x)
+    # -----------------------------------------------------------
+    def make_background(self):
+        small = tk.PhotoImage(width=W // 2, height=H // 2)
+        rows = []
+        for y in range(0, H, 2):
+            row = " ".join(bg_at(x, y) for x in range(0, W, 2))
+            rows.append("{" + row + "}")
+        small.put(" ".join(rows))
+        return small.zoom(2, 2)
+
+    # -----------------------------------------------------------
+    # 5. Dark rounded card with a soft shadow
+    # -----------------------------------------------------------
+    def create_card(self):
+        x1, y1, x2, y2 = CARD
+        for grow in (14, 10, 6, 3):                # layered soft shadow
+            shade = blend(bg_at(W / 2, y2), "#0b1b33", 0.10 + (14 - grow) * 0.03)
+            self.canvas.create_polygon(
+                rounded_points(x1 - grow, y1 - grow + 8, x2 + grow,
+                               y2 + grow + 8, CARD_R + grow),
+                smooth=True, fill=shade, outline="")
+        self.canvas.create_polygon(
+            rounded_points(x1, y1, x2, y2, CARD_R), smooth=True,
+            fill=CARD_COLOR, outline="#232b38", width=1)
+
+    # -----------------------------------------------------------
+    # 6. Display: small expression line + big result line
     # -----------------------------------------------------------
     def create_display(self):
-        self.expr_var = tk.StringVar()
-        self.result_var = tk.StringVar(value="0")
+        right = CARD[2] - 22
+        self.expr_text = self.canvas.create_text(
+            right, 58, anchor="e", text="", fill="#8a93a3",
+            font=("Segoe UI", 12))
+        self.result_text = self.canvas.create_text(
+            right, 98, anchor="e", text="0", fill=WHITE,
+            font=("Segoe UI", 32, "bold"))
 
-        tk.Label(
-            self.root, textvariable=self.expr_var, anchor="e",
-            font=("Consolas", 14), bg="#1e1e1e", fg="#a0a0a0",
-        ).grid(row=0, column=0, columnspan=5, sticky="ew", padx=10, pady=(10, 0))
+    def show_expression(self):
+        text = self.expression
+        if len(text) > 30:
+            text = "…" + text[-29:]
+        self.canvas.itemconfig(self.expr_text, text=text)
 
-        tk.Label(
-            self.root, textvariable=self.result_var, anchor="e",
-            font=("Consolas", 26, "bold"), bg="#1e1e1e", fg="white",
-        ).grid(row=1, column=0, columnspan=5, sticky="ew", padx=10, pady=(0, 10))
+    def show_result(self, text, calculated=False):
+        self.result = text
+        shown = ("=" + pretty(text)) if calculated else text
+        # smaller font for longer text so it always fits
+        n = len(shown)
+        size = 32 if n <= 9 else 26 if n <= 12 else 20 if n <= 16 else 15
+        self.canvas.itemconfig(self.result_text, text=shown,
+                               font=("Segoe UI", size, "bold"))
 
     # -----------------------------------------------------------
-    # 3. Buttons placed using the grid layout
-    #    Each button: (label, text inserted / action)
+    # 7. Buttons: small scientific rows + main keypad
     # -----------------------------------------------------------
     def create_buttons(self):
-        layout = [
-            [("sin", "sin("), ("cos", "cos("), ("tan", "tan("), ("log", "log("), ("ln", "ln(")],
-            [("√", "sqrt("), ("x²", "**2"), ("xʸ", "^"), ("π", "pi"), ("e", "e")],
-            [("(", "("), (")", ")"), ("C", "CLEAR"), ("⌫", "BACK"), ("÷", "/")],
-            [("7", "7"), ("8", "8"), ("9", "9"), ("×", "*"), ("-", "-")],
-            [("4", "4"), ("5", "5"), ("6", "6"), ("+", "+"), ("%", "%")],
-            [("1", "1"), ("2", "2"), ("3", "3"), ("0", "0"), (".", ".")],
+        S, N, G = STYLE_SMALL, STYLE_NUMBER, STYLE_GRAY
+        O, E = STYLE_OPERATOR, STYLE_EQUALS
+
+        def col_x(c):
+            return LEFT + c * (COLW + GAP)
+
+        def row_y(r):
+            return MAIN_TOP + r * (ROWH + GAP)
+
+        # small scientific buttons: 3 rows x 4 columns
+        small = [
+            [("sin", "sin("), ("cos", "cos("), ("tan", "tan("), ("log", "log(")],
+            [("ln", "ln("), ("√", "sqrt("), ("x²", "**2"), ("xʸ", "^")],
+            [("π", "pi"), ("e", "e"), ("(", "("), (")", ")")],
         ]
-
-        for r, row in enumerate(layout, start=2):
+        for r, row in enumerate(small):
             for c, (label, value) in enumerate(row):
-                self.make_button(label, value, r, c)
+                self.add_button(col_x(c), SMALL_TOP + r * (SMALL_H + GAP),
+                                COLW, SMALL_H, label, value, S,
+                                ("Segoe UI", 10, "bold"), radius=10)
 
-        # Equals button spans the full width on the last row
-        tk.Button(
-            self.root, text="=", font=("Consolas", 16, "bold"),
-            bg="#ff9500", fg="white", bd=0, height=2,
-            command=self.calculate,
-        ).grid(row=8, column=0, columnspan=5, sticky="nsew", padx=3, pady=3)
+        # main keypad (4 columns). "+" is tall, "0" is wide.
+        main = [
+            [("AC", "CLEAR", G), ("⌫", "BACK", G), ("÷", "/", O), ("×", "*", O)],
+            [("7", "7", N), ("8", "8", N), ("9", "9", N), ("−", "-", O)],
+            [("4", "4", N), ("5", "5", N), ("6", "6", N)],
+            [("1", "1", N), ("2", "2", N), ("3", "3", N)],
+        ]
+        for r, row in enumerate(main):
+            for c, (label, value, style) in enumerate(row):
+                size = 16 if label.isdigit() else 15
+                self.add_button(col_x(c), row_y(r), COLW, ROWH, label, value,
+                                style, ("Segoe UI", size, "bold"))
 
-    def make_button(self, label, value, row, col):
-        if value == "CLEAR":
-            colour = "#d9534f"
-        elif value == "BACK":
-            colour = "#f0ad4e"
-        elif label.isdigit() or label == ".":
-            colour = "#3a3a3a"
-        else:
-            colour = "#505050"
+        # tall "+" button spans two rows (rows 2 and 3, last column)
+        self.add_button(col_x(3), row_y(2), COLW, ROWH * 2 + GAP, "+", "+", O,
+                        ("Segoe UI", 18, "bold"))
 
-        tk.Button(
-            self.root, text=label, width=6, height=2,
-            font=("Consolas", 13), bg=colour, fg="white",
-            activebackground="#707070", activeforeground="white", bd=0,
-            # lambda with default arg: each button remembers ITS OWN value
-            command=lambda v=value: self.on_click(v),
-        ).grid(row=row, column=col, sticky="nsew", padx=3, pady=3)
+        # last row: wide "0", ".", "="
+        self.add_button(col_x(0), row_y(4), COLW * 2 + GAP, ROWH, "0", "0", N,
+                        ("Segoe UI", 16, "bold"))
+        self.add_button(col_x(2), row_y(4), COLW, ROWH, ".", ".", N,
+                        ("Segoe UI", 16, "bold"))
+        self.add_button(col_x(3), row_y(4), COLW, ROWH, "=", "=", E,
+                        ("Segoe UI", 20, "bold"))
+
+    def add_button(self, x, y, w, h, label, value, style, font, radius=14):
+        button = GlassButton(self.canvas, x, y, w, h, label, value, style,
+                             font, radius)
+        self.buttons.append(button)
+        self.by_value[value] = button
 
     # -----------------------------------------------------------
-    # 4. Event handling: every button click ends up here
+    # 8. Event handling: mouse and keyboard
+    # -----------------------------------------------------------
+    def bind_events(self):
+        self.canvas.bind("<Motion>", self.on_motion)
+        self.canvas.bind("<Leave>", lambda e: self.set_hovered(None))
+        self.canvas.bind("<ButtonPress-1>", self.on_mouse_press)
+
+        self.root.bind("<Return>", lambda e: self.press("="))
+        self.root.bind("<BackSpace>", lambda e: self.press("BACK"))
+        self.root.bind("<Escape>", lambda e: self.press("CLEAR"))
+        self.root.bind("<Key>", self.on_key)
+
+    def button_at(self, x, y):
+        for button in self.buttons:
+            if button.contains(x, y):
+                return button
+        return None
+
+    def set_hovered(self, button):
+        if button is self.hovered:
+            return
+        if self.hovered:
+            self.hovered.set_hover(False)
+        if button:
+            button.set_hover(True)
+        self.hovered = button
+        self.canvas.config(cursor="hand2" if button else "")
+
+    def on_motion(self, event):
+        self.set_hovered(self.button_at(event.x, event.y))
+
+    def on_mouse_press(self, event):
+        button = self.button_at(event.x, event.y)
+        if button:
+            button.start_animation()
+            self.on_click(button.value)
+
+    def on_key(self, event):
+        if event.char and event.char in "0123456789.+-*/()^%":
+            self.press(event.char)
+
+    def press(self, value):
+        """Used by the keyboard: animate the matching button, then click."""
+        button = self.by_value.get(value)
+        if button:
+            button.start_animation()
+        self.on_click(value)
+
+    # -----------------------------------------------------------
+    # 9. Every button click ends up here
     # -----------------------------------------------------------
     def on_click(self, value):
         if value == "CLEAR":
             self.clear()
         elif value == "BACK":
             self.backspace()
+        elif value == "=":
+            self.calculate()
         else:
             # If the last result was an error message, start fresh
-            if self.result_var.get() in ("Error", "Cannot divide by zero"):
+            if self.result in ("Error", "Cannot divide by zero"):
                 self.clear()
             self.expression += value
-            self.update_display()
+            self.show_expression()
 
     def clear(self):
         self.expression = ""
-        self.expr_var.set("")
-        self.result_var.set("0")
+        self.show_expression()
+        self.show_result("0")
 
     def backspace(self):
         # Remove the last character typed
         self.expression = self.expression[:-1]
-        self.update_display()
-
-    def update_display(self):
-        self.expr_var.set(self.expression)
+        self.show_expression()
 
     # -----------------------------------------------------------
-    # 5. Evaluate the expression and handle errors
+    # 10. Evaluate the expression and handle errors
     # -----------------------------------------------------------
     def calculate(self):
         if not self.expression:
@@ -146,32 +418,19 @@ class Calculator:
                 if result == int(result):
                     result = int(result)
 
-            self.result_var.set(str(result))
+            self.show_result(str(result), calculated=True)
             self.expression = str(result)  # allows chaining calculations
 
         except ZeroDivisionError:
-            self.result_var.set("Cannot divide by zero")
+            self.show_result("Cannot divide by zero")
         except ValueError:
             # e.g. sqrt(-1), log(0)
-            self.result_var.set("Error")
+            self.show_result("Error")
         except (SyntaxError, TypeError, NameError):
             # e.g. "5++" or unfinished brackets
-            self.result_var.set("Error")
+            self.show_result("Error")
         except OverflowError:
-            self.result_var.set("Error")
-
-    # -----------------------------------------------------------
-    # 6. Keyboard support (bonus)
-    # -----------------------------------------------------------
-    def bind_keyboard(self):
-        self.root.bind("<Return>", lambda event: self.calculate())
-        self.root.bind("<BackSpace>", lambda event: self.backspace())
-        self.root.bind("<Escape>", lambda event: self.clear())
-        self.root.bind("<Key>", self.on_key)
-
-    def on_key(self, event):
-        if event.char and event.char in "0123456789.+-*/()^%":
-            self.on_click(event.char)
+            self.show_result("Error")
 
 
 if __name__ == "__main__":

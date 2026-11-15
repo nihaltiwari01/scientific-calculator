@@ -114,9 +114,8 @@ scientific-calculator/
 | Name | Roll No. |
 |---|---|
 | Nihal Tiwari | C25CS007 |
-| Member 2 name | Roll no. |
-| Member 3 name | Roll no. |
-| Member 4 name | Roll no. |
+| Mudit Tejra | C25CS009 |
+| Pawan Kumar Nayak | C25CS011 |
 
 **Institute:** National Institute of Technology Meghalaya  
 **Program:** MCA, 3rd Semester
