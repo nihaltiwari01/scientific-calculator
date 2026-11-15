@@ -8,8 +8,6 @@ A desktop scientific calculator built with Python and Tkinter. It supports basic
 
 ## 📸 Screenshot
 
-![Home Screen](home.png)
-
 | Cosine | Logarithm | Error Handling |
 |---|---|---|
 | ![cos](cos.png) | ![log](log.png) | ![error](error.png) |
