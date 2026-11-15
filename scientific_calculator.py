@@ -6,9 +6,14 @@ No extra libraries needed (tkinter and math come with Python).
 The whole calculator is drawn on ONE Canvas:
 background (light with a big blue circle) -> dark rounded card ->
 display text -> rounded buttons.
+
+Trigonometric functions use DEGREES and show EXACT values for the
+standard angles, like a trigonometric table:
+    sin(30) = 1/2     cos(45) = 1/√2     tan(60) = √3     tan(90) = Undefined
 """
 
 import math
+import re
 import tkinter as tk
 
 
@@ -16,10 +21,47 @@ import tkinter as tk
 # 1. Math functions allowed inside an expression.
 #    Trigonometric functions work in DEGREES (sin(90) = 1).
 # ---------------------------------------------------------------
+class UndefinedError(Exception):
+    """Raised when a trig function is undefined (e.g. tan(90))."""
+
+
+def sin_d(x):
+    return math.sin(math.radians(x))
+
+
+def cos_d(x):
+    return math.cos(math.radians(x))
+
+
+def tan_d(x):
+    if abs(x % 180 - 90) < 1e-9:
+        raise UndefinedError
+    return math.tan(math.radians(x))
+
+
+def sec_d(x):
+    if abs(x % 180 - 90) < 1e-9:
+        raise UndefinedError
+    return 1 / math.cos(math.radians(x))
+
+
+def cosec_d(x):
+    r = x % 180
+    if r < 1e-9 or 180 - r < 1e-9:
+        raise UndefinedError
+    return 1 / math.sin(math.radians(x))
+
+
+def cot_d(x):
+    r = x % 180
+    if r < 1e-9 or 180 - r < 1e-9:
+        raise UndefinedError
+    return math.cos(math.radians(x)) / math.sin(math.radians(x))
+
+
 SAFE_NAMES = {
-    "sin": lambda x: math.sin(math.radians(x)),
-    "cos": lambda x: math.cos(math.radians(x)),
-    "tan": lambda x: math.tan(math.radians(x)),
+    "sin": sin_d, "cos": cos_d, "tan": tan_d,
+    "sec": sec_d, "cosec": cosec_d, "cot": cot_d,
     "sqrt": math.sqrt,
     "log": math.log10,
     "ln": math.log,
@@ -28,15 +70,85 @@ SAFE_NAMES = {
 }
 
 # ---------------------------------------------------------------
-# 2. Sizes and colours
+# 2. Exact trigonometric table (values for the reference angle)
+#    None means "Undefined".
 # ---------------------------------------------------------------
-W, H = 360, 586                     # window size (keep both even)
-CARD = (16, 16, 344, 570)           # dark card: x1, y1, x2, y2
+TRIG_TABLE = {
+    #          0°      30°      45°      60°      90°
+    "sin":   {0: "0",  30: "1/2",   45: "1/√2", 60: "√3/2",  90: "1"},
+    "cos":   {0: "1",  30: "√3/2",  45: "1/√2", 60: "1/2",   90: "0"},
+    "tan":   {0: "0",  30: "1/√3",  45: "1",    60: "√3",    90: None},
+    "sec":   {0: "1",  30: "2/√3",  45: "√2",   60: "2",     90: None},
+    "cosec": {0: None, 30: "2",     45: "√2",   60: "2/√3",  90: "1"},
+    "cot":   {0: None, 30: "√3",    45: "1",    60: "1/√3",  90: "0"},
+}
+
+CALL_PATTERN = re.compile(r"^(sin|cos|tan|sec|cosec|cot)\((.*)\)$")
+
+
+def exact_value(name, angle):
+    """Exact text for a trig function at an angle in degrees.
+    Returns e.g. '1/2', '-√3/2', 'Undefined', or None if the angle
+    is not one of the standard angles."""
+    ang = round(angle % 360, 9)
+    if ang >= 360:
+        ang = 0
+    # reference angle (angle measured from the x-axis, 0 to 90)
+    if ang <= 90:
+        ref = ang
+    elif ang <= 180:
+        ref = 180 - ang
+    elif ang <= 270:
+        ref = ang - 180
+    else:
+        ref = 360 - ang
+    if ref not in TRIG_TABLE[name]:
+        return None
+    value = TRIG_TABLE[name][ref]
+    if value is None:
+        return "Undefined"
+    # the sign comes from the real value of the function
+    if value != "0" and SAFE_NAMES[name](ang) < 0:
+        return "-" + value
+    return value
+
+
+def exact_trig(expr):
+    """If expr is exactly ONE trig call like sin(30), return its exact
+    text. Otherwise return None (a normal decimal answer is used)."""
+    match = CALL_PATTERN.match(expr)
+    if not match:
+        return None
+    inner = match.group(2)
+    depth = 0
+    for ch in inner:                  # the first "(" must close at the end
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                return None
+    if depth != 0:
+        return None
+    try:
+        angle = eval(inner, {"__builtins__": {}}, SAFE_NAMES)
+    except Exception:
+        return None
+    if not isinstance(angle, (int, float)):
+        return None
+    return exact_value(match.group(1), angle)
+
+
+# ---------------------------------------------------------------
+# 3. Sizes and colours
+# ---------------------------------------------------------------
+W, H = 360, 624                     # window size (keep both even)
+CARD = (16, 16, 344, 608)           # dark card: x1, y1, x2, y2
 CARD_R = 30                         # card corner radius
 LEFT, COLW, GAP = 32, 68, 8         # first column x, button width, gap
 ROWH = 52                           # height of a main button
 SMALL_H, SMALL_TOP = 30, 140        # small (scientific) buttons
-MAIN_TOP = 262                      # y where the main buttons start
+MAIN_TOP = 300                      # y where the main buttons start
 
 WHITE = "#ffffff"
 PAGE = "#eaf2fb"                    # light page colour
@@ -49,6 +161,8 @@ STYLE_NUMBER = ("#232a36", "#a9b8cf")
 STYLE_GRAY = ("#4b515c", WHITE)
 STYLE_OPERATOR = ("#0f66d9", WHITE)
 STYLE_EQUALS = ("#1e90ff", WHITE)
+
+ERRORS = ("Error", "Cannot divide by zero", "Undefined")
 
 
 def blend(color1, color2, t):
@@ -67,7 +181,7 @@ def bg_at(x, y):
     d = math.hypot(x - 70, y - 150)
     if d < 210:
         color = blend(color, BLUE, min(1.0, (1 - d / 210) * 2.4))
-    d = math.hypot(x - 310, y - 540)
+    d = math.hypot(x - 310, y - 560)
     if d < 130:
         color = blend(color, "#9cc6f5", (1 - d / 130) * 0.9)
     return color
@@ -85,7 +199,7 @@ def rounded_points(x1, y1, x2, y2, r):
 
 
 def pretty(text):
-    """Add thousand separators: 12454 -> 12,454 (errors stay unchanged)."""
+    """Add thousand separators: 12454 -> 12,454 (other text unchanged)."""
     try:
         if "e" in text.lower():
             return text
@@ -98,7 +212,7 @@ def pretty(text):
 
 
 # ---------------------------------------------------------------
-# 3. One rounded button drawn on the shared canvas.
+# 4. One rounded button drawn on the shared canvas.
 #    Layers (bottom to top): shadow, body, ripple, shine, label.
 #    On press: the body squishes and a water ripple spreads out.
 # ---------------------------------------------------------------
@@ -194,7 +308,7 @@ class Calculator:
         self.root.resizable(False, False)
 
         self.expression = ""      # what the user has typed so far
-        self.result = "0"         # raw result (used for chaining + errors)
+        self.result = "0"         # raw result (used for errors)
         self.buttons = []         # all buttons
         self.by_value = {}        # value -> button (used by the keyboard)
         self.hovered = None       # button under the mouse
@@ -212,7 +326,7 @@ class Calculator:
         self.bind_events()
 
     # -----------------------------------------------------------
-    # 4. Background image (painted at half size, then zoomed 2x)
+    # 5. Background image (painted at half size, then zoomed 2x)
     # -----------------------------------------------------------
     def make_background(self):
         small = tk.PhotoImage(width=W // 2, height=H // 2)
@@ -224,7 +338,7 @@ class Calculator:
         return small.zoom(2, 2)
 
     # -----------------------------------------------------------
-    # 5. Dark rounded card with a soft shadow
+    # 6. Dark rounded card with a soft shadow
     # -----------------------------------------------------------
     def create_card(self):
         x1, y1, x2, y2 = CARD
@@ -239,16 +353,34 @@ class Calculator:
             fill=CARD_COLOR, outline="#232b38", width=1)
 
     # -----------------------------------------------------------
-    # 6. Display: small expression line + big result line
+    # 7. Display: expression line + big result line.
+    #    Exact trig answers are drawn as a STACKED fraction
+    #    (numerator, line, denominator) like a trig table.
     # -----------------------------------------------------------
     def create_display(self):
+        c = self.canvas
         right = CARD[2] - 22
-        self.expr_text = self.canvas.create_text(
+        self.expr_text = c.create_text(
             right, 58, anchor="e", text="", fill="#8a93a3",
             font=("Segoe UI", 12))
-        self.result_text = self.canvas.create_text(
+        self.result_text = c.create_text(
             right, 98, anchor="e", text="0", fill=WHITE,
             font=("Segoe UI", 32, "bold"))
+
+        # fraction parts (hidden until needed)
+        self.frac_eq = c.create_text(
+            right, 99, anchor="e", text="=", fill=WHITE,
+            font=("Segoe UI", 26, "bold"), state="hidden")
+        self.frac_num = c.create_text(
+            right, 83, text="", fill=WHITE,
+            font=("Segoe UI", 17, "bold"), state="hidden")
+        self.frac_bar = c.create_line(
+            right - 30, 99, right, 99, fill=WHITE, width=2, state="hidden")
+        self.frac_den = c.create_text(
+            right, 115, text="", fill=WHITE,
+            font=("Segoe UI", 17, "bold"), state="hidden")
+        self.frac_items = [self.frac_eq, self.frac_num, self.frac_bar,
+                           self.frac_den]
 
     def show_expression(self):
         text = self.expression
@@ -256,8 +388,34 @@ class Calculator:
             text = "…" + text[-29:]
         self.canvas.itemconfig(self.expr_text, text=text)
 
+    def hide_fraction(self):
+        for item in self.frac_items:
+            self.canvas.itemconfig(item, state="hidden")
+        self.canvas.itemconfig(self.result_text, state="normal")
+
+    def show_fraction(self, text):
+        """Draw text like '-√3/2' as a stacked fraction."""
+        negative = text.startswith("-")
+        numerator, denominator = text.lstrip("-").split("/")
+        c = self.canvas
+        right = CARD[2] - 22
+        width = max(len(numerator), len(denominator)) * 12 + 10
+        centre = right - width / 2
+
+        c.itemconfig(self.result_text, state="hidden")
+        c.coords(self.frac_bar, centre - width / 2, 99, centre + width / 2, 99)
+        c.coords(self.frac_num, centre, 83)
+        c.coords(self.frac_den, centre, 115)
+        c.coords(self.frac_eq, right - width - 8, 99)
+        c.itemconfig(self.frac_num, text=numerator)
+        c.itemconfig(self.frac_den, text=denominator)
+        c.itemconfig(self.frac_eq, text="=−" if negative else "=")
+        for item in self.frac_items:
+            c.itemconfig(item, state="normal")
+
     def show_result(self, text, calculated=False):
         self.result = text
+        self.hide_fraction()
         shown = ("=" + pretty(text)) if calculated else text
         # smaller font for longer text so it always fits
         n = len(shown)
@@ -265,8 +423,16 @@ class Calculator:
         self.canvas.itemconfig(self.result_text, text=shown,
                                font=("Segoe UI", size, "bold"))
 
+    def show_exact(self, text):
+        """Show an exact trig answer such as 1/2, √3 or -1."""
+        if "/" in text:
+            self.result = text
+            self.show_fraction(text)
+        else:
+            self.show_result(text, calculated=True)
+
     # -----------------------------------------------------------
-    # 7. Buttons: small scientific rows + main keypad
+    # 8. Buttons: small scientific rows + main keypad
     # -----------------------------------------------------------
     def create_buttons(self):
         S, N, G = STYLE_SMALL, STYLE_NUMBER, STYLE_GRAY
@@ -278,11 +444,12 @@ class Calculator:
         def row_y(r):
             return MAIN_TOP + r * (ROWH + GAP)
 
-        # small scientific buttons: 3 rows x 4 columns
+        # small scientific buttons: 4 rows x 4 columns
         small = [
-            [("sin", "sin("), ("cos", "cos("), ("tan", "tan("), ("log", "log(")],
-            [("ln", "ln("), ("√", "sqrt("), ("x²", "**2"), ("xʸ", "^")],
-            [("π", "pi"), ("e", "e"), ("(", "("), (")", ")")],
+            [("sin", "sin("), ("cos", "cos("), ("tan", "tan("), ("π", "pi")],
+            [("sec", "sec("), ("cosec", "cosec("), ("cot", "cot("), ("e", "e")],
+            [("log", "log("), ("ln", "ln("), ("√", "sqrt("), ("x²", "**2")],
+            [("xʸ", "^"), ("(", "("), (")", ")"), ("%", "%")],
         ]
         for r, row in enumerate(small):
             for c, (label, value) in enumerate(row):
@@ -322,7 +489,7 @@ class Calculator:
         self.by_value[value] = button
 
     # -----------------------------------------------------------
-    # 8. Event handling: mouse and keyboard
+    # 9. Event handling: mouse and keyboard
     # -----------------------------------------------------------
     def bind_events(self):
         self.canvas.bind("<Motion>", self.on_motion)
@@ -371,7 +538,7 @@ class Calculator:
         self.on_click(value)
 
     # -----------------------------------------------------------
-    # 9. Every button click ends up here
+    # 10. Every button click ends up here
     # -----------------------------------------------------------
     def on_click(self, value):
         if value == "CLEAR":
@@ -382,7 +549,7 @@ class Calculator:
             self.calculate()
         else:
             # If the last result was an error message, start fresh
-            if self.result in ("Error", "Cannot divide by zero"):
+            if self.result in ERRORS:
                 self.clear()
             self.expression += value
             self.show_expression()
@@ -398,7 +565,7 @@ class Calculator:
         self.show_expression()
 
     # -----------------------------------------------------------
-    # 10. Evaluate the expression and handle errors
+    # 11. Evaluate the expression and handle errors
     # -----------------------------------------------------------
     def calculate(self):
         if not self.expression:
@@ -408,6 +575,12 @@ class Calculator:
         python_expr = self.expression.replace("^", "**")
 
         try:
+            # Exact trig answer, e.g. sin(30) -> 1/2 (None if not applicable)
+            exact = exact_trig(python_expr)
+            if exact == "Undefined":
+                self.show_result("Undefined")
+                return
+
             # eval() runs the text as a Python expression.
             # __builtins__ is emptied so only SAFE_NAMES can be used.
             result = eval(python_expr, {"__builtins__": {}}, SAFE_NAMES)
@@ -418,11 +591,16 @@ class Calculator:
                 if result == int(result):
                     result = int(result)
 
-            self.show_result(str(result), calculated=True)
+            if exact is not None:
+                self.show_exact(exact)
+            else:
+                self.show_result(str(result), calculated=True)
             self.expression = str(result)  # allows chaining calculations
 
         except ZeroDivisionError:
             self.show_result("Cannot divide by zero")
+        except UndefinedError:
+            self.show_result("Undefined")
         except ValueError:
             # e.g. sqrt(-1), log(0)
             self.show_result("Error")
