@@ -747,8 +747,7 @@ class Calculator:
             shown = round(value, 10)
             if shown == int(shown):
                 shown = int(shown)
-            self.expression = str(shown)           # allows chaining
-            self.show_expression()
+            self.expression = str(shown)           # keeps chaining working
             self.show_result(str(shown), calculated=True)
 
     def clear(self):

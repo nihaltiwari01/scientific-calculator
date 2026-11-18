@@ -16,7 +16,7 @@ A desktop scientific calculator built with Python and Tkinter. It supports basic
  
 | History Panel | RAD Mode |
 |---|---|
-| ![history](history.png) | ![rad](rad.png) |
+| ![history](history.png) | ![rad](deg_to_rad.png) |
  
 ---
  
@@ -137,7 +137,7 @@ flowchart TD
 - Regular expressions (`re`) to detect a single trig call
 ---
  
-## 🎤 Viva Quick Notes
+## 🎤Quick Notes
  
 **How are button clicks processed?**
 Every mouse press goes to `on_mouse_press()`. It finds the button under the mouse and calls `on_click(value)`. The value is added to the `expression` string and shown on the display. Keyboard keys go through `press(value)` into the same `on_click()`.
