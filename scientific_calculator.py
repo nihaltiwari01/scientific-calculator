@@ -11,11 +11,15 @@ Trigonometric functions support DEG and RAD modes (DEG is the default).
 In DEG mode, standard angles show EXACT values like a trigonometric table:
     sin(30) = 1/2     cos(45) = 1/√2     tan(60) = √3     tan(90) = Undefined
 
-NEW: History. Tap the "History" pill (top-left of the card) to open a panel
+History: tap the "History" pill (top-left of the card) to open a panel
 with your previous calculations. Tap a row to load it again, "Clear" to
 empty the list, and use the mouse wheel to scroll.
 
 The DEG/RAD pill at the top-right switches the trigonometric angle mode.
+
+NEW: If an answer is on the screen and you press the DEG/RAD pill, the
+answer is converted too:   90 =  then RAD  ->  1.5707963268
+                           and then DEG   ->  90
 """
 
 import math
@@ -179,7 +183,7 @@ ROWH = 52                           # height of a main button
 SMALL_H, SMALL_TOP = 30, 140        # small (scientific) buttons
 MAIN_TOP = 300                      # y where the main buttons start
 
-# --- History (new) ---
+# --- History ---
 HIST_BTN = (34, 26, 108, 48)        # "History" pill: x1, y1, x2, y2
 PANEL = (28, 134, 332, 292)         # history panel, covers the small buttons
 HISTORY_MAX = 30                    # how many calculations to remember
@@ -357,7 +361,11 @@ class Calculator:
         self.by_value = {}        # value -> button (used by the keyboard)
         self.hovered = None       # button under the mouse
 
-        # --- History (new) ---
+        # --- DEG/RAD answer conversion (new) ---
+        self.last_value = None        # exact number of the last answer
+        self.just_calculated = False  # True right after pressing "="
+
+        # --- History ---
         self.history = []             # (expression, result), oldest first
         self.history_open = False
         self.history_offset = 0       # scroll position
@@ -373,7 +381,7 @@ class Calculator:
 
         self.create_card()
         self.create_display()
-        self.create_history_button()               # new
+        self.create_history_button()
         self.create_buttons()
         self.bind_events()
 
@@ -545,7 +553,7 @@ class Calculator:
         self.by_value[value] = button
 
     # -----------------------------------------------------------
-    # 8b. History (new): pill button, storage, panel
+    # 8b. History: pill button, storage, panel
     # -----------------------------------------------------------
     def create_history_button(self):
         x1, y1, x2, y2 = HIST_BTN
@@ -629,6 +637,7 @@ class Calculator:
                 self.expression = expression          # editable again
                 self.show_expression()
                 self.show_exact(result)               # handles fractions too
+                self.just_calculated = False          # (new) not a fresh answer
                 self.toggle_history()                 # close the panel
                 return
 
@@ -717,21 +726,41 @@ class Calculator:
             # If the last result was an error message, start fresh
             if self.result in ERRORS:
                 self.clear()
+            self.just_calculated = False       # (new) typing a new expression
             self.expression += value
             self.show_expression()
 
     def toggle_mode(self):
-        """Switch between degree and radian input."""
-        ANGLE["mode"] = "RAD" if ANGLE["mode"] == "DEG" else "DEG"
+        """Switch between degree and radian input.
+        If an answer is on the screen, convert that answer as well."""
+        old_mode = ANGLE["mode"]
+        ANGLE["mode"] = "RAD" if old_mode == "DEG" else "DEG"
         self.by_value["MODE"].set_label(ANGLE["mode"])
 
+        # (new) convert the answer that is currently shown
+        if self.just_calculated and isinstance(self.last_value, (int, float)):
+            if old_mode == "DEG":                  # DEG -> RAD
+                value = math.radians(self.last_value)
+            else:                                  # RAD -> DEG
+                value = math.degrees(self.last_value)
+            self.last_value = value                # keep the exact value
+            shown = round(value, 10)
+            if shown == int(shown):
+                shown = int(shown)
+            self.expression = str(shown)           # allows chaining
+            self.show_expression()
+            self.show_result(str(shown), calculated=True)
+
     def clear(self):
+        self.just_calculated = False
+        self.last_value = None
         self.expression = ""
         self.show_expression()
         self.show_result("0")
 
     def backspace(self):
         # Remove the last character typed
+        self.just_calculated = False
         self.expression = self.expression[:-1]
         self.show_expression()
 
@@ -755,6 +784,7 @@ class Calculator:
             # eval() runs the text as a Python expression.
             # __builtins__ is emptied so only SAFE_NAMES can be used.
             result = eval(python_expr, {"__builtins__": {}}, SAFE_NAMES)
+            raw_result = result            # (new) exact value for DEG/RAD
 
             # Show whole numbers without ".0" and trim float noise
             if isinstance(result, float):
@@ -771,6 +801,10 @@ class Calculator:
             self.add_history(self.expression,
                              exact if exact is not None else str(result))
             self.expression = str(result)  # allows chaining calculations
+
+            # (new) remember the answer so DEG/RAD can convert it
+            self.last_value = raw_result
+            self.just_calculated = True
 
         except ZeroDivisionError:
             self.show_result("Cannot divide by zero")
