@@ -1,3 +1,23 @@
+"""
+Scientific Calculator using Python Tkinter  (Dark card + blue theme)
+Run:  python scientific_calculator.py
+No extra libraries needed (tkinter and math come with Python).
+
+The whole calculator is drawn on ONE Canvas:
+background (light with a big blue circle) -> dark rounded card ->
+display text -> rounded buttons.
+
+Trigonometric functions support DEG and RAD modes (DEG is the default).
+In DEG mode, standard angles show EXACT values like a trigonometric table:
+    sin(30) = 1/2     cos(45) = 1/√2     tan(60) = √3     tan(90) = Undefined
+
+NEW: History. Tap the "History" pill (top-left of the card) to open a panel
+with your previous calculations. Tap a row to load it again, "Clear" to
+empty the list, and use the mouse wheel to scroll.
+
+The DEG/RAD pill at the top-right switches the trigonometric angle mode.
+"""
+
 import math
 import re
 import tkinter as tk
@@ -5,22 +25,21 @@ import tkinter as tk
 
 # ---------------------------------------------------------------
 # 1. Math functions allowed inside an expression.
-#    Trig functions follow the current angle mode (DEG or RAD).
+#    Trigonometric functions work in DEGREES (sin(90) = 1).
 # ---------------------------------------------------------------
 class UndefinedError(Exception):
     """Raised when a trig function is undefined (e.g. tan(90))."""
 
 
-# Current angle mode: "DEG" or "RAD" (changed by the toggle button)
+# The calculator starts in degree mode. The DEG/RAD button switches modes.
 ANGLE = {"mode": "DEG"}
 
 
 def to_deg(x):
-    """Convert the user's angle to degrees, depending on the mode."""
+    """Convert an entered angle to degrees for the internal trig functions."""
     return x if ANGLE["mode"] == "DEG" else math.degrees(x)
 
 
-# ----- pure degree functions (used internally)
 def sin_d(x):
     return math.sin(math.radians(x))
 
@@ -62,15 +81,15 @@ DEG_FUNCS = {
 
 
 def make_trig(name):
-    """Wrap a degree function so it respects the DEG/RAD mode."""
+    """Make a trig function that respects the selected angle mode."""
     func = DEG_FUNCS[name]
     return lambda x: func(to_deg(x))
 
 
 SAFE_NAMES = {
-    "sin": make_trig("sin"), "cos": make_trig("cos"), "tan": make_trig("tan"),
-    "sec": make_trig("sec"), "cosec": make_trig("cosec"),
-    "cot": make_trig("cot"),
+    "sin": make_trig("sin"), "cos": make_trig("cos"),
+    "tan": make_trig("tan"), "sec": make_trig("sec"),
+    "cosec": make_trig("cosec"), "cot": make_trig("cot"),
     "sqrt": math.sqrt,
     "log": math.log10,
     "ln": math.log,
@@ -96,7 +115,7 @@ CALL_PATTERN = re.compile(r"^(sin|cos|tan|sec|cosec|cot)\((.*)\)$")
 
 
 def exact_value(name, angle):
-    """Exact text for a trig function at an angle in DEGREES.
+    """Exact text for a trig function at an angle in degrees.
     Returns e.g. '1/2', '-√3/2', 'Undefined', or None if the angle
     is not one of the standard angles."""
     ang = round(angle % 360, 9)
@@ -116,12 +135,8 @@ def exact_value(name, angle):
     value = TRIG_TABLE[name][ref]
     if value is None:
         return "Undefined"
-    # the sign comes from the real value of the function (in degrees)
-    try:
-        real = DEG_FUNCS[name](ang)
-    except UndefinedError:
-        return "Undefined"
-    if value != "0" and real < 0:
+    # the sign comes from the real value of the function
+    if value != "0" and DEG_FUNCS[name](ang) < 0:
         return "-" + value
     return value
 
@@ -149,7 +164,7 @@ def exact_trig(expr):
         return None
     if not isinstance(angle, (int, float)):
         return None
-    # exact table works in degrees, so convert if we are in RAD mode
+    # The exact-value table is defined in degrees.
     return exact_value(match.group(1), to_deg(angle))
 
 
@@ -163,6 +178,12 @@ LEFT, COLW, GAP = 32, 68, 8         # first column x, button width, gap
 ROWH = 52                           # height of a main button
 SMALL_H, SMALL_TOP = 30, 140        # small (scientific) buttons
 MAIN_TOP = 300                      # y where the main buttons start
+
+# --- History (new) ---
+HIST_BTN = (34, 26, 108, 48)        # "History" pill: x1, y1, x2, y2
+PANEL = (28, 134, 332, 292)         # history panel, covers the small buttons
+HISTORY_MAX = 30                    # how many calculations to remember
+HIST_ROWS = 5                       # rows visible at once
 
 WHITE = "#ffffff"
 PAGE = "#eaf2fb"                    # light page colour
@@ -226,6 +247,11 @@ def pretty(text):
         return text
 
 
+def short(text, limit):
+    """Cut long text and add … so it fits on one history row."""
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
 # ---------------------------------------------------------------
 # 4. One rounded button drawn on the shared canvas.
 #    Layers (bottom to top): shadow, body, ripple, shine, label.
@@ -262,9 +288,6 @@ class GlassButton:
         self.label = canvas.create_text(
             x + w / 2, y + h / 2, text=text, fill=text_color, font=font)
 
-    def set_text(self, text):
-        self.canvas.itemconfig(self.label, text=text)
-
     # ----- shapes (inset makes the button shrink a little when pressed)
     def body_points(self, inset):
         return rounded_points(
@@ -277,6 +300,9 @@ class GlassButton:
         side = 6 + inset
         return rounded_points(self.x + side, top, self.x + self.w - side,
                               bottom, max(2, self.radius - 4))
+
+    def set_label(self, text):
+        self.canvas.itemconfig(self.label, text=text)
 
     def contains(self, px, py):
         return (self.x <= px <= self.x + self.w and
@@ -331,6 +357,13 @@ class Calculator:
         self.by_value = {}        # value -> button (used by the keyboard)
         self.hovered = None       # button under the mouse
 
+        # --- History (new) ---
+        self.history = []             # (expression, result), oldest first
+        self.history_open = False
+        self.history_offset = 0       # scroll position
+        self.history_hits = []        # clickable rows, rebuilt on every draw
+        self.clear_box = (0, 0, 0, 0)
+
         self.canvas = tk.Canvas(root, width=W, height=H, highlightthickness=0,
                                 bg=PAGE)
         self.canvas.pack()
@@ -340,6 +373,7 @@ class Calculator:
 
         self.create_card()
         self.create_display()
+        self.create_history_button()               # new
         self.create_buttons()
         self.bind_events()
 
@@ -450,7 +484,7 @@ class Calculator:
             self.show_result(text, calculated=True)
 
     # -----------------------------------------------------------
-    # 8. Buttons: DEG/RAD toggle, small scientific rows, main keypad
+    # 8. Buttons: small scientific rows + main keypad
     # -----------------------------------------------------------
     def create_buttons(self):
         S, N, G = STYLE_SMALL, STYLE_NUMBER, STYLE_GRAY
@@ -462,8 +496,8 @@ class Calculator:
         def row_y(r):
             return MAIN_TOP + r * (ROWH + GAP)
 
-        # DEG / RAD toggle (top-left corner of the card)
-        self.add_button(LEFT, 28, 54, 22, "DEG", "MODE", STYLE_MODE,
+        # DEG / RAD toggle in the top-right of the card.
+        self.add_button(270, 28, 54, 22, ANGLE["mode"], "MODE", STYLE_MODE,
                         ("Segoe UI", 9, "bold"), radius=9)
 
         # small scientific buttons: 4 rows x 4 columns
@@ -511,12 +545,111 @@ class Calculator:
         self.by_value[value] = button
 
     # -----------------------------------------------------------
+    # 8b. History (new): pill button, storage, panel
+    # -----------------------------------------------------------
+    def create_history_button(self):
+        x1, y1, x2, y2 = HIST_BTN
+        self.hist_body = self.canvas.create_polygon(
+            rounded_points(x1, y1, x2, y2, 11), smooth=True,
+            fill=STYLE_SMALL[0], outline="#2a3342")
+        self.hist_label = self.canvas.create_text(
+            (x1 + x2) / 2, (y1 + y2) / 2, text="History",
+            fill=STYLE_SMALL[1], font=("Segoe UI", 9, "bold"))
+
+    def add_history(self, expression, result):
+        entry = (expression, result)
+        if self.history and self.history[-1] == entry:
+            return                                   # skip exact repeats
+        self.history.append(entry)
+        del self.history[:-HISTORY_MAX]              # keep only the newest
+        self.history_offset = 0
+        if self.history_open:
+            self.draw_history()
+
+    @staticmethod
+    def in_box(x, y, box):
+        return box[0] <= x <= box[2] and box[1] <= y <= box[3]
+
+    def toggle_history(self):
+        self.history_open = not self.history_open
+        self.history_offset = 0
+        self.set_hovered(None)
+        on = self.history_open
+        self.canvas.itemconfig(
+            self.hist_body, fill=STYLE_OPERATOR[0] if on else STYLE_SMALL[0])
+        self.canvas.itemconfig(
+            self.hist_label, fill=WHITE if on else STYLE_SMALL[1])
+        self.draw_history()
+
+    def draw_history(self):
+        c = self.canvas
+        c.delete("history")
+        self.history_hits = []
+        if not self.history_open:
+            return
+        x1, y1, x2, y2 = PANEL
+        c.create_polygon(rounded_points(x1, y1, x2, y2, 16), smooth=True,
+                         fill="#10141b", outline="#2a3342", tags="history")
+        c.create_text(x1 + 16, y1 + 16, anchor="w", text="History",
+                      fill="#8294ad", font=("Segoe UI", 10, "bold"),
+                      tags="history")
+        self.clear_box = (x2 - 66, y1 + 5, x2 - 8, y1 + 27)
+        c.create_text(x2 - 16, y1 + 16, anchor="e", text="Clear",
+                      fill="#5aa2ff", font=("Segoe UI", 10, "bold"),
+                      tags="history")
+        if not self.history:
+            c.create_text((x1 + x2) / 2, (y1 + y2) / 2 + 10,
+                          text="No calculations yet", fill="#5d6a80",
+                          font=("Segoe UI", 11), tags="history")
+            return
+        newest_first = self.history[::-1]
+        shown = newest_first[self.history_offset:
+                             self.history_offset + HIST_ROWS]
+        for i, (expression, result) in enumerate(shown):
+            top = y1 + 34 + i * 24
+            self.history_hits.append(
+                ((x1 + 8, top, x2 - 8, top + 22), expression, result))
+            c.create_line(x1 + 16, top - 1, x2 - 16, top - 1,
+                          fill="#1c222d", tags="history")
+            c.create_text(x1 + 16, top + 11, anchor="w",
+                          text=short(expression, 20), fill="#8a93a3",
+                          font=("Segoe UI", 10), tags="history")
+            c.create_text(x2 - 16, top + 11, anchor="e",
+                          text="= " + short(result, 12), fill=WHITE,
+                          font=("Segoe UI", 11, "bold"), tags="history")
+
+    def on_history_click(self, x, y):
+        if self.in_box(x, y, self.clear_box):
+            self.history.clear()
+            self.history_offset = 0
+            self.draw_history()
+            return
+        for box, expression, result in self.history_hits:
+            if self.in_box(x, y, box):
+                self.expression = expression          # editable again
+                self.show_expression()
+                self.show_exact(result)               # handles fractions too
+                self.toggle_history()                 # close the panel
+                return
+
+    def on_wheel(self, event):
+        if not self.history_open:
+            return
+        step = -1 if (event.delta > 0 or event.num == 4) else 1
+        limit = max(0, len(self.history) - HIST_ROWS)
+        self.history_offset = min(limit, max(0, self.history_offset + step))
+        self.draw_history()
+
+    # -----------------------------------------------------------
     # 9. Event handling: mouse and keyboard
     # -----------------------------------------------------------
     def bind_events(self):
         self.canvas.bind("<Motion>", self.on_motion)
         self.canvas.bind("<Leave>", lambda e: self.set_hovered(None))
         self.canvas.bind("<ButtonPress-1>", self.on_mouse_press)
+        self.canvas.bind("<MouseWheel>", self.on_wheel)   # Windows, macOS
+        self.canvas.bind("<Button-4>", self.on_wheel)     # Linux
+        self.canvas.bind("<Button-5>", self.on_wheel)
 
         self.root.bind("<Return>", lambda e: self.press("="))
         self.root.bind("<BackSpace>", lambda e: self.press("BACK"))
@@ -524,6 +657,8 @@ class Calculator:
         self.root.bind("<Key>", self.on_key)
 
     def button_at(self, x, y):
+        if self.history_open and self.in_box(x, y, PANEL):
+            return None                       # panel covers the small buttons
         for button in self.buttons:
             if button.contains(x, y):
                 return button
@@ -543,6 +678,12 @@ class Calculator:
         self.set_hovered(self.button_at(event.x, event.y))
 
     def on_mouse_press(self, event):
+        if self.in_box(event.x, event.y, HIST_BTN):
+            self.toggle_history()
+            return
+        if self.history_open and self.in_box(event.x, event.y, PANEL):
+            self.on_history_click(event.x, event.y)
+            return
         button = self.button_at(event.x, event.y)
         if button:
             button.start_animation()
@@ -555,7 +696,8 @@ class Calculator:
     def press(self, value):
         """Used by the keyboard: animate the matching button, then click."""
         button = self.by_value.get(value)
-        if button:
+        # a covered button must not animate on top of the history panel
+        if button and not (self.history_open and button.y < MAIN_TOP):
             button.start_animation()
         self.on_click(value)
 
@@ -579,9 +721,9 @@ class Calculator:
             self.show_expression()
 
     def toggle_mode(self):
-        """Switch between degrees and radians."""
+        """Switch between degree and radian input."""
         ANGLE["mode"] = "RAD" if ANGLE["mode"] == "DEG" else "DEG"
-        self.by_value["MODE"].set_text(ANGLE["mode"])
+        self.by_value["MODE"].set_label(ANGLE["mode"])
 
     def clear(self):
         self.expression = ""
@@ -624,6 +766,10 @@ class Calculator:
                 self.show_exact(exact)
             else:
                 self.show_result(str(result), calculated=True)
+
+            # save to history BEFORE the expression is replaced by the result
+            self.add_history(self.expression,
+                             exact if exact is not None else str(result))
             self.expression = str(result)  # allows chaining calculations
 
         except ZeroDivisionError:
