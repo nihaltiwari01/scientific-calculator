@@ -7,19 +7,21 @@ A desktop scientific calculator built with Python and Tkinter. It supports basic
 ---
  
 ## 📸 Screenshots
- 
-![Home Screen](home.png)
- 
-| Trigonometric | Logarithm | Error Handling |
-|---|---|---|
-| ![Trigonometric Function](sin.png) | ![log](log.png) | ![error](error.png) |
- 
-| History Panel | RAD Mode |
-|---|---|
-| ![history](history.png) | ![rad](deg_to_rad.png) |
- 
+
+<div align="center">
+<table>
+  <tr>
+    <td align="center"><b>Home</b><br><br><img src="home.png" width="100" alt="Home"></td>
+    <td align="center"><b>Trigonometric</b><br><br><img src="sin.png" width="100" alt="Trigonometric"></td>
+    <td align="center"><b>Logarithm</b><br><br><img src="log.png" width="100" alt="Logarithm"></td>
+    <td align="center"><b>History Panel</b><br><br><img src="history.png" width="100" alt="History Panel"></td>
+    <td align="center"><b>RAD Mode</b><br><br><img src="deg_to_rad.png" width="100" alt="RAD Mode"></td>
+    <td align="center"><b>Error Handling</b><br><br><img src="error.png" width="100" alt="Error Handling"></td>
+  </tr>
+</table>
+</div>
+
 ---
- 
 ## 📋 Minimum Requirements (given in the assignment)
  
 | # | Requirement | Status | How this project meets it |
@@ -218,7 +220,7 @@ scientific-calculator/
 ├── log.png                    # Logarithm example
 ├── error.png                  # Error handling example
 ├── history.png                # History panel screenshot
-├── rad.png                    # RAD mode screenshot
+├── deg_to_rad.png                    # RAD mode screenshot
 └── README.md                  # Project documentation
 ```
  
