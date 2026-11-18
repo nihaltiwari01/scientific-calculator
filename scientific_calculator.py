@@ -1,17 +1,3 @@
-"""
-Scientific Calculator using Python Tkinter  (Dark card + blue theme)
-Run:  python scientific_calculator.py
-No extra libraries needed (tkinter and math come with Python).
-
-The whole calculator is drawn on ONE Canvas:
-background (light with a big blue circle) -> dark rounded card ->
-display text -> rounded buttons.
-
-Trigonometric functions use DEGREES and show EXACT values for the
-standard angles, like a trigonometric table:
-    sin(30) = 1/2     cos(45) = 1/√2     tan(60) = √3     tan(90) = Undefined
-"""
-
 import math
 import re
 import tkinter as tk
@@ -19,12 +5,22 @@ import tkinter as tk
 
 # ---------------------------------------------------------------
 # 1. Math functions allowed inside an expression.
-#    Trigonometric functions work in DEGREES (sin(90) = 1).
+#    Trig functions follow the current angle mode (DEG or RAD).
 # ---------------------------------------------------------------
 class UndefinedError(Exception):
     """Raised when a trig function is undefined (e.g. tan(90))."""
 
 
+# Current angle mode: "DEG" or "RAD" (changed by the toggle button)
+ANGLE = {"mode": "DEG"}
+
+
+def to_deg(x):
+    """Convert the user's angle to degrees, depending on the mode."""
+    return x if ANGLE["mode"] == "DEG" else math.degrees(x)
+
+
+# ----- pure degree functions (used internally)
 def sin_d(x):
     return math.sin(math.radians(x))
 
@@ -59,9 +55,22 @@ def cot_d(x):
     return math.cos(math.radians(x)) / math.sin(math.radians(x))
 
 
-SAFE_NAMES = {
+DEG_FUNCS = {
     "sin": sin_d, "cos": cos_d, "tan": tan_d,
     "sec": sec_d, "cosec": cosec_d, "cot": cot_d,
+}
+
+
+def make_trig(name):
+    """Wrap a degree function so it respects the DEG/RAD mode."""
+    func = DEG_FUNCS[name]
+    return lambda x: func(to_deg(x))
+
+
+SAFE_NAMES = {
+    "sin": make_trig("sin"), "cos": make_trig("cos"), "tan": make_trig("tan"),
+    "sec": make_trig("sec"), "cosec": make_trig("cosec"),
+    "cot": make_trig("cot"),
     "sqrt": math.sqrt,
     "log": math.log10,
     "ln": math.log,
@@ -87,7 +96,7 @@ CALL_PATTERN = re.compile(r"^(sin|cos|tan|sec|cosec|cot)\((.*)\)$")
 
 
 def exact_value(name, angle):
-    """Exact text for a trig function at an angle in degrees.
+    """Exact text for a trig function at an angle in DEGREES.
     Returns e.g. '1/2', '-√3/2', 'Undefined', or None if the angle
     is not one of the standard angles."""
     ang = round(angle % 360, 9)
@@ -107,8 +116,12 @@ def exact_value(name, angle):
     value = TRIG_TABLE[name][ref]
     if value is None:
         return "Undefined"
-    # the sign comes from the real value of the function
-    if value != "0" and SAFE_NAMES[name](ang) < 0:
+    # the sign comes from the real value of the function (in degrees)
+    try:
+        real = DEG_FUNCS[name](ang)
+    except UndefinedError:
+        return "Undefined"
+    if value != "0" and real < 0:
         return "-" + value
     return value
 
@@ -136,7 +149,8 @@ def exact_trig(expr):
         return None
     if not isinstance(angle, (int, float)):
         return None
-    return exact_value(match.group(1), angle)
+    # exact table works in degrees, so convert if we are in RAD mode
+    return exact_value(match.group(1), to_deg(angle))
 
 
 # ---------------------------------------------------------------
@@ -161,6 +175,7 @@ STYLE_NUMBER = ("#232a36", "#a9b8cf")
 STYLE_GRAY = ("#4b515c", WHITE)
 STYLE_OPERATOR = ("#0f66d9", WHITE)
 STYLE_EQUALS = ("#1e90ff", WHITE)
+STYLE_MODE = ("#1b3a66", "#7fb8ff")
 
 ERRORS = ("Error", "Cannot divide by zero", "Undefined")
 
@@ -246,6 +261,9 @@ class GlassButton:
             fill=blend(fill, WHITE, 0.06), outline="")
         self.label = canvas.create_text(
             x + w / 2, y + h / 2, text=text, fill=text_color, font=font)
+
+    def set_text(self, text):
+        self.canvas.itemconfig(self.label, text=text)
 
     # ----- shapes (inset makes the button shrink a little when pressed)
     def body_points(self, inset):
@@ -432,7 +450,7 @@ class Calculator:
             self.show_result(text, calculated=True)
 
     # -----------------------------------------------------------
-    # 8. Buttons: small scientific rows + main keypad
+    # 8. Buttons: DEG/RAD toggle, small scientific rows, main keypad
     # -----------------------------------------------------------
     def create_buttons(self):
         S, N, G = STYLE_SMALL, STYLE_NUMBER, STYLE_GRAY
@@ -443,6 +461,10 @@ class Calculator:
 
         def row_y(r):
             return MAIN_TOP + r * (ROWH + GAP)
+
+        # DEG / RAD toggle (top-left corner of the card)
+        self.add_button(LEFT, 28, 54, 22, "DEG", "MODE", STYLE_MODE,
+                        ("Segoe UI", 9, "bold"), radius=9)
 
         # small scientific buttons: 4 rows x 4 columns
         small = [
@@ -547,12 +569,19 @@ class Calculator:
             self.backspace()
         elif value == "=":
             self.calculate()
+        elif value == "MODE":
+            self.toggle_mode()
         else:
             # If the last result was an error message, start fresh
             if self.result in ERRORS:
                 self.clear()
             self.expression += value
             self.show_expression()
+
+    def toggle_mode(self):
+        """Switch between degrees and radians."""
+        ANGLE["mode"] = "RAD" if ANGLE["mode"] == "DEG" else "DEG"
+        self.by_value["MODE"].set_text(ANGLE["mode"])
 
     def clear(self):
         self.expression = ""
