@@ -3,23 +3,24 @@ Scientific Calculator using Python Tkinter  (Dark card + blue theme)
 Run:  python scientific_calculator.py
 No extra libraries needed (tkinter and math come with Python).
 
-The whole calculator is drawn on ONE Canvas:
-background (light with a big blue circle) -> dark rounded card ->
-display text -> rounded buttons.
+Layout: the keypad uses Tkinter's real GRID geometry manager.
+Every button is a small Canvas widget placed with
+    button.grid(row=..., column=..., rowspan=..., columnspan=...)
+inside Frame widgets (the "+" spans 2 rows, the "0" spans 2 columns).
+The background, dark card and display text are drawn on one big Canvas.
 
 Trigonometric functions support DEG and RAD modes (DEG is the default).
-In DEG mode, standard angles show EXACT values like a trigonometric table:
+Standard angles show EXACT values like a trigonometric table:
     sin(30) = 1/2     cos(45) = 1/√2     tan(60) = √3     tan(90) = Undefined
 
-History: tap the "History" pill (top-left of the card) to open a panel
-with your previous calculations. Tap a row to load it again, "Clear" to
+History: click the "History" pill (top-left of the card) to open a panel
+with your previous calculations. Click a row to load it again, "Clear" to
 empty the list, and use the mouse wheel to scroll.
 
 The DEG/RAD pill at the top-right switches the trigonometric angle mode.
-
-NEW: If an answer is on the screen and you press the DEG/RAD pill, the
-answer is converted too:   90 =  then RAD  ->  1.5707963268
-                           and then DEG   ->  90
+If an answer is on the screen, pressing the pill converts ONLY the result
+(the expression line stays as you typed it):
+        90 =  then RAD  ->  1.5707963268     and then DEG  ->  90
 """
 
 import math
@@ -179,12 +180,13 @@ W, H = 360, 624                     # window size (keep both even)
 CARD = (16, 16, 344, 608)           # dark card: x1, y1, x2, y2
 CARD_R = 30                         # card corner radius
 LEFT, COLW, GAP = 32, 68, 8         # first column x, button width, gap
+PAD = GAP // 2                      # grid padding around every button
 ROWH = 52                           # height of a main button
 SMALL_H, SMALL_TOP = 30, 140        # small (scientific) buttons
 MAIN_TOP = 300                      # y where the main buttons start
+SHADOW = 4                          # extra pixels under a button for its shadow
 
 # --- History ---
-HIST_BTN = (34, 26, 108, 48)        # "History" pill: x1, y1, x2, y2
 PANEL = (28, 134, 332, 292)         # history panel, covers the small buttons
 HISTORY_MAX = 30                    # how many calculations to remember
 HIST_ROWS = 5                       # rows visible at once
@@ -257,66 +259,84 @@ def short(text, limit):
 
 
 # ---------------------------------------------------------------
-# 4. One rounded button drawn on the shared canvas.
+# 4. One rounded button = one small Canvas WIDGET.
+#    It is placed on the keypad with .grid(row, column, ...).
 #    Layers (bottom to top): shadow, body, ripple, shine, label.
 #    On press: the body squishes and a water ripple spreads out.
 # ---------------------------------------------------------------
-class GlassButton:
+class GlassButton(tk.Canvas):
     FRAMES = 16     # animation steps
     DELAY = 14      # milliseconds between steps
 
-    def __init__(self, canvas, x, y, w, h, text, value, style, font, radius=14):
-        self.canvas = canvas
-        self.x, self.y, self.w, self.h = x, y, w, h
+    def __init__(self, parent, text, value, style, font, command,
+                 width=COLW, height=ROWH, radius=14):
+        super().__init__(parent, width=width, height=height + SHADOW,
+                         bg=CARD_COLOR, highlightthickness=0, cursor="hand2")
+        self.w, self.h = width, height
         self.radius = radius
         self.value = value
+        self.command = command
         self.busy = False
-        self.uid = f"btn{id(self)}"
 
         fill, text_color = style
+        self.base = fill
+        self.base_text = text_color
         self.normal = fill
         self.hover = blend(fill, WHITE, 0.12)
         self.edge = blend(fill, WHITE, 0.10)
         self.glow = blend(fill, WHITE, 0.38)
 
         # soft shadow under the button
-        canvas.create_polygon(
-            rounded_points(x + 1, y + 3, x + w - 1, y + h + 2, radius),
+        self.create_polygon(
+            rounded_points(1, 3, width - 1, height + 2, radius),
             smooth=True, fill="#0b0e13", outline="")
-        self.body = canvas.create_polygon(
+        self.body = self.create_polygon(
             self.body_points(0), smooth=True, fill=self.normal,
             outline=self.edge, width=1)
-        self.shine = canvas.create_polygon(
+        self.shine = self.create_polygon(
             self.shine_points(0), smooth=True,
             fill=blend(fill, WHITE, 0.06), outline="")
-        self.label = canvas.create_text(
-            x + w / 2, y + h / 2, text=text, fill=text_color, font=font)
+        self.label = self.create_text(
+            width / 2, height / 2, text=text, fill=text_color, font=font)
+
+        # each button handles its own mouse events
+        self.bind("<Enter>", lambda e: self.set_hover(True))
+        self.bind("<Leave>", lambda e: self.set_hover(False))
+        self.bind("<ButtonPress-1>", lambda e: self.on_press())
 
     # ----- shapes (inset makes the button shrink a little when pressed)
     def body_points(self, inset):
-        return rounded_points(
-            self.x + inset, self.y + inset,
-            self.x + self.w - inset, self.y + self.h - inset, self.radius)
+        return rounded_points(inset, inset, self.w - inset, self.h - inset,
+                              self.radius)
 
     def shine_points(self, inset):
-        top = self.y + 3 + inset
-        bottom = self.y + self.h * 0.46
+        top = 3 + inset
+        bottom = self.h * 0.46
         side = 6 + inset
-        return rounded_points(self.x + side, top, self.x + self.w - side,
-                              bottom, max(2, self.radius - 4))
+        return rounded_points(side, top, self.w - side, bottom,
+                              max(2, self.radius - 4))
 
     def set_label(self, text):
-        self.canvas.itemconfig(self.label, text=text)
+        self.itemconfig(self.label, text=text)
 
-    def contains(self, px, py):
-        return (self.x <= px <= self.x + self.w and
-                self.y <= py <= self.y + self.h)
+    def set_active(self, on):
+        """Highlight the button (used by the History pill while open)."""
+        fill = STYLE_OPERATOR[0] if on else self.base
+        self.normal = fill
+        self.hover = blend(fill, WHITE, 0.12)    # hover colour follows the new colour
+        self.glow = blend(fill, WHITE, 0.38)     # ripple colour follows it too
+        self.itemconfig(self.body, fill=self.normal)
+        self.itemconfig(self.shine, fill=blend(fill, WHITE, 0.06))
+        self.itemconfig(self.label, fill=WHITE if on else self.base_text)
 
     def set_hover(self, on):
-        self.canvas.itemconfig(self.body, fill=self.hover if on else self.normal)
-        self.canvas.itemconfig(
-            self.shine,
-            fill=blend(self.normal, WHITE, 0.16 if on else 0.06))
+        self.itemconfig(self.body, fill=self.hover if on else self.normal)
+        self.itemconfig(
+            self.shine, fill=blend(self.normal, WHITE, 0.16 if on else 0.06))
+
+    def on_press(self):
+        self.start_animation()
+        self.command(self.value)
 
     # ----- press animation
     def start_animation(self):
@@ -325,28 +345,27 @@ class GlassButton:
             self.animate(0)
 
     def animate(self, step):
-        c = self.canvas
-        c.delete("ripple" + self.uid)
+        self.delete("ripple")
         if step > self.FRAMES:                     # animation finished
-            c.coords(self.body, *self.body_points(0))
-            c.coords(self.shine, *self.shine_points(0))
+            self.coords(self.body, *self.body_points(0))
+            self.coords(self.shine, *self.shine_points(0))
             self.busy = False
             return
 
         t = step / self.FRAMES                     # goes from 0 to 1
         inset = 2.5 * math.sin(math.pi * t)        # shrink, then spring back
-        c.coords(self.body, *self.body_points(inset))
-        c.coords(self.shine, *self.shine_points(inset))
+        self.coords(self.body, *self.body_points(inset))
+        self.coords(self.shine, *self.shine_points(inset))
 
         # ripple: an oval growing from the centre and fading away
         rx, ry = (self.w / 2 - 3) * t, (self.h / 2 - 3) * t
-        cx, cy = self.x + self.w / 2, self.y + self.h / 2
-        c.create_oval(cx - rx, cy - ry, cx + rx, cy + ry,
-                      fill=blend(self.glow, self.hover, t), outline="",
-                      tags="ripple" + self.uid)
-        c.tag_raise(self.shine)                    # keep shine and text on top
-        c.tag_raise(self.label)
-        c.after(self.DELAY, self.animate, step + 1)
+        cx, cy = self.w / 2, self.h / 2
+        self.create_oval(cx - rx, cy - ry, cx + rx, cy + ry,
+                         fill=blend(self.glow, self.hover, t), outline="",
+                         tags="ripple")
+        self.tag_raise(self.shine)                 # keep shine and text on top
+        self.tag_raise(self.label)
+        self.after(self.DELAY, self.animate, step + 1)
 
 
 class Calculator:
@@ -357,13 +376,12 @@ class Calculator:
 
         self.expression = ""      # what the user has typed so far
         self.result = "0"         # raw result (used for errors)
-        self.buttons = []         # all buttons
         self.by_value = {}        # value -> button (used by the keyboard)
-        self.hovered = None       # button under the mouse
 
-        # --- DEG/RAD answer conversion (new) ---
+        # --- DEG/RAD answer conversion ---
         self.last_value = None        # exact number of the last answer
         self.just_calculated = False  # True right after pressing "="
+        self.last_typed = ""          # expression that produced the last answer
 
         # --- History ---
         self.history = []             # (expression, result), oldest first
@@ -381,8 +399,8 @@ class Calculator:
 
         self.create_card()
         self.create_display()
-        self.create_history_button()
         self.create_buttons()
+        self.create_history_panel()
         self.bind_events()
 
     # -----------------------------------------------------------
@@ -492,23 +510,40 @@ class Calculator:
             self.show_result(text, calculated=True)
 
     # -----------------------------------------------------------
-    # 8. Buttons: small scientific rows + main keypad
+    # 8. Buttons placed with Tkinter's GRID layout manager
+    #    Three Frames (header, small keys, main keypad) sit on the card.
+    #    Inside each Frame every button uses .grid(row, column, ...).
     # -----------------------------------------------------------
+    def add_button(self, parent, label, value, style, font, row, column,
+                   width=COLW, height=ROWH, radius=14, rowspan=1,
+                   columnspan=1, sticky=None, pady=(0, PAD)):
+        button = GlassButton(parent, label, value, style, font,
+                             self.on_click, width, height, radius)
+        button.grid(row=row, column=column, rowspan=rowspan,
+                    columnspan=columnspan, padx=PAD, pady=pady, sticky=sticky)
+        self.by_value[value] = button
+        return button
+
     def create_buttons(self):
         S, N, G = STYLE_SMALL, STYLE_NUMBER, STYLE_GRAY
         O, E = STYLE_OPERATOR, STYLE_EQUALS
+        pill_font = ("Segoe UI", 9, "bold")
+        grid_w = 4 * (COLW + 2 * PAD)               # width of a 4-column grid
 
-        def col_x(c):
-            return LEFT + c * (COLW + GAP)
+        # ---- header row: History pill (left) and DEG/RAD pill (right)
+        header = tk.Frame(self.canvas, bg=CARD_COLOR)
+        header.grid_columnconfigure(1, weight=1)    # empty middle column
+        self.history_pill = self.add_button(
+            header, "History", "HISTORY", S, pill_font, 0, 0,
+            width=74, height=22, radius=11, sticky="w", pady=0)
+        self.add_button(
+            header, ANGLE["mode"], "MODE", STYLE_MODE, pill_font, 0, 2,
+            width=54, height=22, radius=9, sticky="e", pady=0)
+        self.canvas.create_window(LEFT - PAD, 24, anchor="nw", window=header,
+                                  width=grid_w, height=28)
 
-        def row_y(r):
-            return MAIN_TOP + r * (ROWH + GAP)
-
-        # DEG / RAD toggle in the top-right of the card.
-        self.add_button(270, 28, 54, 22, ANGLE["mode"], "MODE", STYLE_MODE,
-                        ("Segoe UI", 9, "bold"), radius=9)
-
-        # small scientific buttons: 4 rows x 4 columns
+        # ---- small scientific buttons: 4 rows x 4 columns
+        small_frame = tk.Frame(self.canvas, bg=CARD_COLOR)
         small = [
             [("sin", "sin("), ("cos", "cos("), ("tan", "tan("), ("π", "pi")],
             [("sec", "sec("), ("cosec", "cosec("), ("cot", "cot("), ("e", "e")],
@@ -517,11 +552,15 @@ class Calculator:
         ]
         for r, row in enumerate(small):
             for c, (label, value) in enumerate(row):
-                self.add_button(col_x(c), SMALL_TOP + r * (SMALL_H + GAP),
-                                COLW, SMALL_H, label, value, S,
-                                ("Segoe UI", 10, "bold"), radius=10)
+                self.add_button(small_frame, label, value, S,
+                                ("Segoe UI", 10, "bold"), r, c,
+                                height=SMALL_H, radius=10)
+        self.small_window = self.canvas.create_window(
+            LEFT - PAD, SMALL_TOP, anchor="nw", window=small_frame,
+            width=grid_w, height=4 * (SMALL_H + SHADOW + PAD))
 
-        # main keypad (4 columns). "+" is tall, "0" is wide.
+        # ---- main keypad: 4 columns x 5 rows
+        main_frame = tk.Frame(self.canvas, bg=CARD_COLOR)
         main = [
             [("AC", "CLEAR", G), ("⌫", "BACK", G), ("÷", "/", O), ("×", "*", O)],
             [("7", "7", N), ("8", "8", N), ("9", "9", N), ("−", "-", O)],
@@ -531,38 +570,39 @@ class Calculator:
         for r, row in enumerate(main):
             for c, (label, value, style) in enumerate(row):
                 size = 16 if label.isdigit() else 15
-                self.add_button(col_x(c), row_y(r), COLW, ROWH, label, value,
-                                style, ("Segoe UI", size, "bold"))
+                self.add_button(main_frame, label, value, style,
+                                ("Segoe UI", size, "bold"), r, c)
 
-        # tall "+" button spans two rows (rows 2 and 3, last column)
-        self.add_button(col_x(3), row_y(2), COLW, ROWH * 2 + GAP, "+", "+", O,
-                        ("Segoe UI", 18, "bold"))
+        # tall "+" spans 2 rows (rowspan=2) in the last column
+        self.add_button(main_frame, "+", "+", O, ("Segoe UI", 18, "bold"),
+                        2, 3, height=ROWH * 2 + GAP, rowspan=2)
 
-        # last row: wide "0", ".", "="
-        self.add_button(col_x(0), row_y(4), COLW * 2 + GAP, ROWH, "0", "0", N,
-                        ("Segoe UI", 16, "bold"))
-        self.add_button(col_x(2), row_y(4), COLW, ROWH, ".", ".", N,
-                        ("Segoe UI", 16, "bold"))
-        self.add_button(col_x(3), row_y(4), COLW, ROWH, "=", "=", E,
-                        ("Segoe UI", 20, "bold"))
+        # last row: wide "0" spans 2 columns (columnspan=2), ".", "="
+        self.add_button(main_frame, "0", "0", N, ("Segoe UI", 16, "bold"),
+                        4, 0, width=COLW * 2 + GAP, columnspan=2)
+        self.add_button(main_frame, ".", ".", N, ("Segoe UI", 16, "bold"), 4, 2)
+        self.add_button(main_frame, "=", "=", E, ("Segoe UI", 20, "bold"), 4, 3)
 
-    def add_button(self, x, y, w, h, label, value, style, font, radius=14):
-        button = GlassButton(self.canvas, x, y, w, h, label, value, style,
-                             font, radius)
-        self.buttons.append(button)
-        self.by_value[value] = button
+        self.canvas.create_window(
+            LEFT - PAD, MAIN_TOP, anchor="nw", window=main_frame,
+            width=grid_w, height=5 * (ROWH + SHADOW + PAD))
 
     # -----------------------------------------------------------
-    # 8b. History: pill button, storage, panel
+    # 8b. History panel (its own Canvas widget, shown on top of the
+    #     small buttons while it is open)
     # -----------------------------------------------------------
-    def create_history_button(self):
-        x1, y1, x2, y2 = HIST_BTN
-        self.hist_body = self.canvas.create_polygon(
-            rounded_points(x1, y1, x2, y2, 11), smooth=True,
-            fill=STYLE_SMALL[0], outline="#2a3342")
-        self.hist_label = self.canvas.create_text(
-            (x1 + x2) / 2, (y1 + y2) / 2, text="History",
-            fill=STYLE_SMALL[1], font=("Segoe UI", 9, "bold"))
+    def create_history_panel(self):
+        x1, y1, x2, y2 = PANEL
+        self.panel_w, self.panel_h = x2 - x1, y2 - y1
+        self.panel = tk.Canvas(self.canvas, width=self.panel_w,
+                               height=self.panel_h, bg=CARD_COLOR,
+                               highlightthickness=0)
+        self.panel.bind("<ButtonPress-1>", self.on_history_click)
+        self.panel.bind("<MouseWheel>", self.on_wheel)    # Windows, macOS
+        self.panel.bind("<Button-4>", self.on_wheel)      # Linux
+        self.panel.bind("<Button-5>", self.on_wheel)
+        self.panel_window = self.canvas.create_window(
+            x1, y1, anchor="nw", window=self.panel, state="hidden")
 
     def add_history(self, expression, result):
         entry = (expression, result)
@@ -581,52 +621,50 @@ class Calculator:
     def toggle_history(self):
         self.history_open = not self.history_open
         self.history_offset = 0
-        self.set_hovered(None)
         on = self.history_open
-        self.canvas.itemconfig(
-            self.hist_body, fill=STYLE_OPERATOR[0] if on else STYLE_SMALL[0])
-        self.canvas.itemconfig(
-            self.hist_label, fill=WHITE if on else STYLE_SMALL[1])
+        self.history_pill.set_active(on)
+        # hide the small buttons while the panel covers their place
+        self.canvas.itemconfig(self.small_window,
+                               state="hidden" if on else "normal")
+        self.canvas.itemconfig(self.panel_window,
+                               state="normal" if on else "hidden")
         self.draw_history()
 
     def draw_history(self):
-        c = self.canvas
-        c.delete("history")
+        p = self.panel
+        p.delete("all")
         self.history_hits = []
         if not self.history_open:
             return
-        x1, y1, x2, y2 = PANEL
-        c.create_polygon(rounded_points(x1, y1, x2, y2, 16), smooth=True,
-                         fill="#10141b", outline="#2a3342", tags="history")
-        c.create_text(x1 + 16, y1 + 16, anchor="w", text="History",
-                      fill="#8294ad", font=("Segoe UI", 10, "bold"),
-                      tags="history")
-        self.clear_box = (x2 - 66, y1 + 5, x2 - 8, y1 + 27)
-        c.create_text(x2 - 16, y1 + 16, anchor="e", text="Clear",
-                      fill="#5aa2ff", font=("Segoe UI", 10, "bold"),
-                      tags="history")
+        w, h = self.panel_w, self.panel_h
+        p.create_polygon(rounded_points(0, 0, w, h, 16), smooth=True,
+                         fill="#10141b", outline="#2a3342")
+        p.create_text(16, 16, anchor="w", text="History", fill="#8294ad",
+                      font=("Segoe UI", 10, "bold"))
+        self.clear_box = (w - 66, 5, w - 8, 27)
+        p.create_text(w - 16, 16, anchor="e", text="Clear", fill="#5aa2ff",
+                      font=("Segoe UI", 10, "bold"))
         if not self.history:
-            c.create_text((x1 + x2) / 2, (y1 + y2) / 2 + 10,
-                          text="No calculations yet", fill="#5d6a80",
-                          font=("Segoe UI", 11), tags="history")
+            p.create_text(w / 2, h / 2 + 10, text="No calculations yet",
+                          fill="#5d6a80", font=("Segoe UI", 11))
             return
         newest_first = self.history[::-1]
         shown = newest_first[self.history_offset:
                              self.history_offset + HIST_ROWS]
         for i, (expression, result) in enumerate(shown):
-            top = y1 + 34 + i * 24
+            top = 34 + i * 24
             self.history_hits.append(
-                ((x1 + 8, top, x2 - 8, top + 22), expression, result))
-            c.create_line(x1 + 16, top - 1, x2 - 16, top - 1,
-                          fill="#1c222d", tags="history")
-            c.create_text(x1 + 16, top + 11, anchor="w",
+                ((8, top, w - 8, top + 22), expression, result))
+            p.create_line(16, top - 1, w - 16, top - 1, fill="#1c222d")
+            p.create_text(16, top + 11, anchor="w",
                           text=short(expression, 20), fill="#8a93a3",
-                          font=("Segoe UI", 10), tags="history")
-            c.create_text(x2 - 16, top + 11, anchor="e",
+                          font=("Segoe UI", 10))
+            p.create_text(w - 16, top + 11, anchor="e",
                           text="= " + short(result, 12), fill=WHITE,
-                          font=("Segoe UI", 11, "bold"), tags="history")
+                          font=("Segoe UI", 11, "bold"))
 
-    def on_history_click(self, x, y):
+    def on_history_click(self, event):
+        x, y = event.x, event.y                      # inside the panel
         if self.in_box(x, y, self.clear_box):
             self.history.clear()
             self.history_offset = 0
@@ -637,7 +675,7 @@ class Calculator:
                 self.expression = expression          # editable again
                 self.show_expression()
                 self.show_exact(result)               # handles fractions too
-                self.just_calculated = False          # (new) not a fresh answer
+                self.just_calculated = False          # not a fresh answer
                 self.toggle_history()                 # close the panel
                 return
 
@@ -650,53 +688,13 @@ class Calculator:
         self.draw_history()
 
     # -----------------------------------------------------------
-    # 9. Event handling: mouse and keyboard
+    # 9. Event handling: keyboard (each button handles its own mouse)
     # -----------------------------------------------------------
     def bind_events(self):
-        self.canvas.bind("<Motion>", self.on_motion)
-        self.canvas.bind("<Leave>", lambda e: self.set_hovered(None))
-        self.canvas.bind("<ButtonPress-1>", self.on_mouse_press)
-        self.canvas.bind("<MouseWheel>", self.on_wheel)   # Windows, macOS
-        self.canvas.bind("<Button-4>", self.on_wheel)     # Linux
-        self.canvas.bind("<Button-5>", self.on_wheel)
-
         self.root.bind("<Return>", lambda e: self.press("="))
         self.root.bind("<BackSpace>", lambda e: self.press("BACK"))
         self.root.bind("<Escape>", lambda e: self.press("CLEAR"))
         self.root.bind("<Key>", self.on_key)
-
-    def button_at(self, x, y):
-        if self.history_open and self.in_box(x, y, PANEL):
-            return None                       # panel covers the small buttons
-        for button in self.buttons:
-            if button.contains(x, y):
-                return button
-        return None
-
-    def set_hovered(self, button):
-        if button is self.hovered:
-            return
-        if self.hovered:
-            self.hovered.set_hover(False)
-        if button:
-            button.set_hover(True)
-        self.hovered = button
-        self.canvas.config(cursor="hand2" if button else "")
-
-    def on_motion(self, event):
-        self.set_hovered(self.button_at(event.x, event.y))
-
-    def on_mouse_press(self, event):
-        if self.in_box(event.x, event.y, HIST_BTN):
-            self.toggle_history()
-            return
-        if self.history_open and self.in_box(event.x, event.y, PANEL):
-            self.on_history_click(event.x, event.y)
-            return
-        button = self.button_at(event.x, event.y)
-        if button:
-            button.start_animation()
-            self.on_click(button.value)
 
     def on_key(self, event):
         if event.char and event.char in "0123456789.+-*/()^%":
@@ -705,8 +703,7 @@ class Calculator:
     def press(self, value):
         """Used by the keyboard: animate the matching button, then click."""
         button = self.by_value.get(value)
-        # a covered button must not animate on top of the history panel
-        if button and not (self.history_open and button.y < MAIN_TOP):
+        if button:
             button.start_animation()
         self.on_click(value)
 
@@ -722,22 +719,24 @@ class Calculator:
             self.calculate()
         elif value == "MODE":
             self.toggle_mode()
+        elif value == "HISTORY":
+            self.toggle_history()
         else:
             # If the last result was an error message, start fresh
             if self.result in ERRORS:
                 self.clear()
-            self.just_calculated = False       # (new) typing a new expression
+            self.just_calculated = False       # typing a new expression
             self.expression += value
             self.show_expression()
 
     def toggle_mode(self):
         """Switch between degree and radian input.
-        If an answer is on the screen, convert that answer as well."""
+        If an answer is on the screen, convert ONLY that answer
+        (the expression line is left exactly as it was)."""
         old_mode = ANGLE["mode"]
         ANGLE["mode"] = "RAD" if old_mode == "DEG" else "DEG"
         self.by_value["MODE"].set_label(ANGLE["mode"])
 
-        # (new) convert the answer that is currently shown
         if self.just_calculated and isinstance(self.last_value, (int, float)):
             if old_mode == "DEG":                  # DEG -> RAD
                 value = math.radians(self.last_value)
@@ -753,14 +752,20 @@ class Calculator:
     def clear(self):
         self.just_calculated = False
         self.last_value = None
+        self.last_typed = ""
         self.expression = ""
         self.show_expression()
         self.show_result("0")
 
     def backspace(self):
-        # Remove the last character typed
+        if self.just_calculated and self.last_typed:
+            # right after "=": edit the expression that was calculated,
+            # so the top line never jumps to the result number
+            self.expression = self.last_typed[:-1]
+            self.last_typed = ""
+        else:
+            self.expression = self.expression[:-1]
         self.just_calculated = False
-        self.expression = self.expression[:-1]
         self.show_expression()
 
     # -----------------------------------------------------------
@@ -783,7 +788,7 @@ class Calculator:
             # eval() runs the text as a Python expression.
             # __builtins__ is emptied so only SAFE_NAMES can be used.
             result = eval(python_expr, {"__builtins__": {}}, SAFE_NAMES)
-            raw_result = result            # (new) exact value for DEG/RAD
+            raw_result = result            # exact value for DEG/RAD
 
             # Show whole numbers without ".0" and trim float noise
             if isinstance(result, float):
@@ -799,9 +804,10 @@ class Calculator:
             # save to history BEFORE the expression is replaced by the result
             self.add_history(self.expression,
                              exact if exact is not None else str(result))
+            self.last_typed = self.expression      # remembered for Backspace
             self.expression = str(result)  # allows chaining calculations
 
-            # (new) remember the answer so DEG/RAD can convert it
+            # remember the answer so DEG/RAD can convert it
             self.last_value = raw_result
             self.just_calculated = True
 
